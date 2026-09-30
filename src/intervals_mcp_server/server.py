@@ -161,3 +161,42 @@ if __name__ == "__main__":
     # Setup transport and start server
     selected_transport = setup_transport()
     start_server(mcp, selected_transport)
+    # --- PLACID add-on: weather forecast tool (Open-Meteo, free, no API key) ---
+# Paste this at the VERY END of src/intervals_mcp_server/server.py in your fork.
+# Optional Render env vars: WEATHER_LAT / WEATHER_LON (defaults to Cambridge, MA).
+
+import json as _json
+import os as _os
+import urllib.request as _urlreq
+
+
+@mcp.tool()
+def get_weather_forecast(days: int = 3, latitude: float | None = None, longitude: float | None = None) -> str:
+    """Hourly outdoor-training forecast: temperature (F), precipitation chance (%),
+    wind (mph) and conditions for the next 1-7 days. Defaults to home location.
+    Use to decide outdoor vs indoor sessions and pick dry training windows."""
+    lat = latitude if latitude is not None else float(_os.getenv("WEATHER_LAT", "42.374"))
+    lon = longitude if longitude is not None else float(_os.getenv("WEATHER_LON", "-71.117"))
+    days = max(1, min(int(days), 7))
+    url = (
+        "https://api.open-meteo.com/v1/forecast"
+        f"?latitude={lat}&longitude={lon}"
+        "&hourly=temperature_2m,precipitation_probability,wind_speed_10m,weather_code"
+        "&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code"
+        f"&temperature_unit=fahrenheit&wind_speed_unit=mph&forecast_days={days}"
+        "&timezone=auto"
+    )
+    with _urlreq.urlopen(url, timeout=15) as resp:
+        data = _json.loads(resp.read().decode())
+    hourly = data.get("hourly", {})
+    out = {
+        "location": {"latitude": lat, "longitude": lon, "timezone": data.get("timezone")},
+        "daily": data.get("daily", {}),
+        "hourly": {
+            k: hourly[k]
+            for k in ("time", "temperature_2m", "precipitation_probability", "wind_speed_10m", "weather_code")
+            if k in hourly
+        },
+    }
+    return _json.dumps(out)
+
